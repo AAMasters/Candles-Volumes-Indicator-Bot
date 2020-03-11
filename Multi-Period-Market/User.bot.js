@@ -51,7 +51,7 @@
 
     Read the candles and volumes from Bruce and produce a single Index File for Market Period. But this is the situation:
 
-    Bruce has a dataset organized with daily files with candles of 1 min. Olivia is writting in this process a single file for each timePeriod for the whole market.
+    Bruce has a dataset organized with daily files with candles of 1 min. Candles Volumes is writting in this process a single file for each timePeriod for the whole market.
     Everytime this process run, must be able to resume its job and process everything pending until reaching the head of the market. So the tactic to do this is the
     following:
 
@@ -92,9 +92,9 @@
                     let reportKey;
                     let statusReport;
 
-                    /* We look first for Charly in order to get when the market starts. */
+                    /* We look first for Exchange Raw Data in order to get when the market starts. */
 
-                    reportKey = "AAMasters" + "-" + "AACharly" + "-" + "Historic-Trades" + "-" + "dataSet.V1";
+                    reportKey = "AAMasters" + "-" + "Exchange-Raw-Data" + "-" + "Historic-Trades" + "-" + "dataSet.V1";
                     if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> getContextVariables -> reportKey = " + reportKey); }
 
                     statusReport = statusDependencies.statusReports.get(reportKey);
@@ -165,7 +165,7 @@
 
                     /* Finally we get our own Status Report. */
 
-                    reportKey = "AAMasters" + "-" + "AAOlivia" + "-" + "Multi-Period-Market" + "-" + "dataSet.V1";
+                    reportKey = "AAMasters" + "-" + "Candles-Volumes" + "-" + "Multi-Period-Market" + "-" + "dataSet.V1";
                     if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> getContextVariables -> reportKey = " + reportKey); }
 
                     statusReport = statusDependencies.statusReports.get(reportKey);
@@ -551,7 +551,7 @@
 
                                         /*
                                         The algorithm that follows is going to agregate candles of 1 min timePeriod read from Bruce, into candles of each timePeriod
-                                        that Olivia generates. For market files those timePediods goes from 1h to 24hs.
+                                        that Candles Volumes generates. For market files those timePediods goes from 1h to 24hs.
                                         */
 
                                         for (let i = 0; i < totalOutputCandles; i++) {
@@ -868,7 +868,7 @@
 
                 try {
 
-                    let reportKey = "AAMasters" + "-" + "AAOlivia" + "-" + "Multi-Period-Market" + "-" + "dataSet.V1";
+                    let reportKey = "AAMasters" + "-" + "Candles-Volumes" + "-" + "Multi-Period-Market" + "-" + "dataSet.V1";
                     let thisReport = statusDependencies.statusReports.get(reportKey);
 
                     thisReport.file.lastExecution = bot.processDatetime;
