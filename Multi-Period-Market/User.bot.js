@@ -1,4 +1,4 @@
-﻿exports.newUserBot = function newUserBot(bot, logger, COMMONS, UTILITIES, fileStorage) {
+﻿exports.newUserBot = function newUserBot(bot, logger, COMMONS, UTILITIES, FILE_STORAGE) {
 
     const FULL_LOG = true;
     const LOG_FILE_CONTENT = false;
@@ -23,12 +23,14 @@
     };
 
     let utilities = UTILITIES.newCloudUtilities(bot, logger);
+    let fileStorage = FILE_STORAGE.newFileStorage(logger);
 
     let statusDependencies;
+    let beginingOfMarket
 
     return thisObject;
 
-    function initialize(pStatusDependencies, pMonth, pYear, callBackFunction) {
+    function initialize(pStatusDependencies, callBackFunction) {
 
         try {
 
@@ -40,7 +42,7 @@
             statusDependencies = pStatusDependencies;
             callBackFunction(global.DEFAULT_OK_RESPONSE);
         } catch (err) {
-            logger.write(MODULE_NAME, "[ERROR] initialize -> err = " + err.message);
+            logger.write(MODULE_NAME, "[ERROR] initialize -> err = " + err.stack);
             callBackFunction(global.DEFAULT_FAIL_RESPONSE);
         }
     }
@@ -49,16 +51,16 @@
 
     This process is going to do the following:
 
-    Read the candles and volumes from Bruce and produce a single Index File for Market Period. But this is the situation:
+    Read the candles and volumes from Exchange Raw Data and produce a single Index File for Market Period. But this is the situation:
 
-    Bruce has a dataset organized with daily files with candles of 1 min. Olivia is writting in this process a single file for each timePeriod for the whole market.
+    Exchange Raw Data has a dataset organized with daily files with candles of 1 min. Candles Volumes is writting in this process a single file for each timeFrame for the whole market.
     Everytime this process run, must be able to resume its job and process everything pending until reaching the head of the market. So the tactic to do this is the
     following:
 
     1. First we need to read the last file written by this process, and load all the information into in-memory arrays. We will then append to this arrays the new
-    information we will get from Bruce.
+    information we will get from Exchange Raw Data.
 
-    2. We know from out status report which was the last DAY we processed from Bruce, but we must be carefull, because that day mightn not have been complete, if the
+    2. We know from out status report which was the last DAY we processed from Exchange Raw Data, but we must be carefull, because that day mightn not have been complete, if the
     last run found the head of the market. That means that we have to be carefull not to append candles that are already there. To simplify what we do is to discard
     all candles of the last processed day, and then we can process that full day again adding all the candles.
 
@@ -70,7 +72,7 @@
 
             if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> Entering function."); }
 
-            let market = global.MARKET;
+            let market = bot.market;
 
             /* Context Variables */
 
@@ -92,9 +94,45 @@
                     let reportKey;
                     let statusReport;
 
-                    /* We look first for Charly in order to get when the market starts. */
+                    /* We look first for Exchange Raw Data in order to get when the market starts. */
 
-                    reportKey = "AAMasters" + "-" + "AACharly" + "-" + "Historic-Trades" + "-" + "dataSet.V1";
+                    reportKey = "Masters" + "-" + "Exchange-Raw-Data" + "-" + "Historic-OHLCVs"
+                    if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> getContextVariables -> reportKey = " + reportKey); }
+
+                    statusReport = statusDependencies.statusReports.get(reportKey);
+
+                    if (statusReport === undefined) { // This means the status report does not exist, that could happen for instance at the begining of a month.
+                        logger.write(MODULE_NAME, "[WARN] start -> getContextVariables -> Status Report does not exist. Retrying Later. ");
+                        callBackFunction(global.DEFAULT_RETRY_RESPONSE);
+                        return;
+                    }
+
+                    if (statusReport.status === "Status Report is corrupt.") {
+                        logger.write(MODULE_NAME, "[ERROR] start -> getContextVariables -> Can not continue because dependecy Status Report is corrupt. ");
+                        callBackFunction(global.DEFAULT_RETRY_RESPONSE);
+                        return;
+                    }
+
+                    thisReport = statusDependencies.statusReports.get(reportKey).file;
+
+                    if (thisReport.beginingOfMarket === undefined) {
+                        logger.write(MODULE_NAME, "[WARN] start -> getContextVariables -> Undefined Last File. -> reportKey = " + reportKey);
+                        logger.write(MODULE_NAME, "[HINT] start -> getContextVariables -> It is too early too run this process since the trade history of the market is not there yet.");
+
+                        let customOK = {
+                            result: global.CUSTOM_OK_RESPONSE.result,
+                            message: "Dependency does not exist."
+                        }
+                        logger.write(MODULE_NAME, "[WARN] start -> getContextVariables -> customOK = " + customOK.message);
+                        callBackFunction(customOK);
+                        return;
+                    }
+
+                    contextVariables.firstTradeFile = new Date(thisReport.beginingOfMarket.year + "-" + thisReport.beginingOfMarket.month + "-" + thisReport.beginingOfMarket.days + " " + thisReport.beginingOfMarket.hours + ":" + thisReport.beginingOfMarket.minutes + GMT_SECONDS);
+
+                    /* Second, we get the report from Exchange Raw Data, to know when the marted ends. */
+
+                    reportKey = "Masters" + "-" + "Exchange-Raw-Data" + "-" + "Historic-OHLCVs"
                     if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> getContextVariables -> reportKey = " + reportKey); }
 
                     statusReport = statusDependencies.statusReports.get(reportKey);
@@ -115,42 +153,6 @@
 
                     if (thisReport.lastFile === undefined) {
                         logger.write(MODULE_NAME, "[WARN] start -> getContextVariables -> Undefined Last File. -> reportKey = " + reportKey);
-                        logger.write(MODULE_NAME, "[HINT] start -> getContextVariables -> It is too early too run this process since the trade history of the market is not there yet.");
-
-                        let customOK = {
-                            result: global.CUSTOM_OK_RESPONSE.result,
-                            message: "Dependency does not exist."
-                        }
-                        logger.write(MODULE_NAME, "[WARN] start -> getContextVariables -> customOK = " + customOK.message);
-                        callBackFunction(customOK);
-                        return;
-                    }
-
-                    contextVariables.firstTradeFile = new Date(thisReport.lastFile.year + "-" + thisReport.lastFile.month + "-" + thisReport.lastFile.days + " " + thisReport.lastFile.hours + ":" + thisReport.lastFile.minutes + GMT_SECONDS);
-
-                    /* Second, we get the report from Bruce, to know when the marted ends. */
-
-                    reportKey = "AAMasters" + "-" + "AABruce" + "-" + "Single-Period-Daily" + "-" + "dataSet.V1" + "-" +  bot.processDatetime.getUTCFullYear() + "-" + utilities.pad(bot.processDatetime.getUTCMonth() + 1,2);
-                    if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> getContextVariables -> reportKey = " + reportKey); }
-
-                    statusReport = statusDependencies.statusReports.get(reportKey);
-
-                    if (statusReport === undefined) { // This means the status report does not exist, that could happen for instance at the begining of a month.
-                        logger.write(MODULE_NAME, "[WARN] start -> getContextVariables -> Status Report does not exist. Retrying Later. ");
-                        callBackFunction(global.DEFAULT_RETRY_RESPONSE);
-                        return;
-                    }
-
-                    if (statusReport.status === "Status Report is corrupt.") {
-                        logger.write(MODULE_NAME, "[ERROR] start -> getContextVariables -> Can not continue because dependecy Status Report is corrupt. ");
-                        callBackFunction(global.DEFAULT_RETRY_RESPONSE);
-                        return;
-                    }
-
-                    thisReport = statusDependencies.statusReports.get(reportKey).file;
-
-                    if (thisReport.lastFile === undefined) {
-                        logger.write(MODULE_NAME, "[ERROR] start -> getContextVariables -> Undefined Last File. -> reportKey = " + reportKey);
 
                         let customOK = {
                             result: global.CUSTOM_OK_RESPONSE.result,
@@ -165,7 +167,7 @@
 
                     /* Finally we get our own Status Report. */
 
-                    reportKey = "AAMasters" + "-" + "AAOlivia" + "-" + "Multi-Period-Market" + "-" + "dataSet.V1";
+                    reportKey = "Masters" + "-" + "Candles-Volumes" + "-" + "Multi-Period-Market" 
                     if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> getContextVariables -> reportKey = " + reportKey); }
 
                     statusReport = statusDependencies.statusReports.get(reportKey);
@@ -185,6 +187,20 @@
                     thisReport = statusDependencies.statusReports.get(reportKey).file;
 
                     if (thisReport.lastFile !== undefined) {
+                        logger.write(MODULE_NAME, "[INFO] start -> getContextVariables -> Process Running not for the very first time. -> reportKey = " + reportKey);
+
+                        beginingOfMarket = new Date(thisReport.beginingOfMarket);
+
+                        if (beginingOfMarket.valueOf() !== contextVariables.firstTradeFile.valueOf()) { // Reset Mechanism for Begining of the Market
+                            logger.write(MODULE_NAME, "[INFO] start -> getContextVariables -> Reset Mechanism for Begining of the Market Activated. -> reportKey = " + reportKey);
+
+                            beginingOfMarket = new Date(contextVariables.firstTradeFile.getUTCFullYear() + "-" + (contextVariables.firstTradeFile.getUTCMonth() + 1) + "-" + contextVariables.firstTradeFile.getUTCDate() + " " + "00:00" + GMT_SECONDS);
+                            contextVariables.lastCandleFile = new Date(contextVariables.firstTradeFile.getUTCFullYear() + "-" + (contextVariables.firstTradeFile.getUTCMonth() + 1) + "-" + contextVariables.firstTradeFile.getUTCDate() + " " + "00:00" + GMT_SECONDS);
+                            contextVariables.lastCandleFile = new Date(contextVariables.lastCandleFile.valueOf() - ONE_DAY_IN_MILISECONDS); // Go back one day to start well.
+
+                            buildCandles();
+                            return;
+                        }
 
                         contextVariables.lastCandleFile = new Date(thisReport.lastFile);
 
@@ -199,7 +215,9 @@
                         return;
 
                     } else {
+                        logger.write(MODULE_NAME, "[INFO] start -> getContextVariables -> Process Running for the very first time. -> reportKey = " + reportKey);
 
+                        beginingOfMarket = new Date(contextVariables.firstTradeFile.getUTCFullYear() + "-" + (contextVariables.firstTradeFile.getUTCMonth() + 1) + "-" + contextVariables.firstTradeFile.getUTCDate() + " " + "00:00" + GMT_SECONDS);
                         contextVariables.lastCandleFile = new Date(contextVariables.firstTradeFile.getUTCFullYear() + "-" + (contextVariables.firstTradeFile.getUTCMonth() + 1) + "-" + contextVariables.firstTradeFile.getUTCDate() + " " + "00:00" + GMT_SECONDS);
                         contextVariables.lastCandleFile = new Date(contextVariables.lastCandleFile.valueOf() - ONE_DAY_IN_MILISECONDS); // Go back one day to start well.
 
@@ -208,7 +226,7 @@
                     }
 
                 } catch (err) {
-                    logger.write(MODULE_NAME, "[ERROR] start -> getContextVariables -> err = " + err.message);
+                    logger.write(MODULE_NAME, "[ERROR] start -> getContextVariables -> err = " + err.stack);
                     if (err.message === "Cannot read property 'file' of undefined") {
                         logger.write(MODULE_NAME, "[HINT] start -> getContextVariables -> Check the bot configuration to see if all of its statusDependencies declarations are correct. ");
                         logger.write(MODULE_NAME, "[HINT] start -> getContextVariables -> Dependencies loaded -> keys = " + JSON.stringify(statusDependencies.keys));
@@ -240,7 +258,8 @@
 
                         if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> findPreviousContent -> loopBody -> Entering function."); }
 
-                        let timePeriod = global.marketFilesPeriods[n][1];
+                        let timeFrame = global.marketFilesPeriods[n][1];
+                        if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> findPreviousContent -> loopBody -> timeFrame = " + timeFrame); }
 
                         let previousCandles;
                         let previousVolumes;
@@ -251,13 +270,13 @@
 
                             if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> findPreviousContent -> loopBody -> getCandles -> Entering function."); }
 
-                            let fileName = '' + market.assetA + '_' + market.assetB + '.json';
-                            let filePath = bot.filePathRoot + "/Output/" + CANDLES_FOLDER_NAME + "/" + bot.process + "/" + timePeriod;
+                            let fileName = 'Data.json';
+                            let filePath = bot.filePathRoot + "/Output/" + CANDLES_FOLDER_NAME + "/" + bot.process + "/" + timeFrame;
                             filePath += '/' + fileName
 
-                            fileStorage.getTextFile(bot.devTeam, filePath, onFileReceived);
+                            fileStorage.getTextFile(filePath, onFileReceived);
 
-                            console.log("[INFO] start -> findPreviousContent -> loopBody -> getCandles -> getting file.");
+                            logger.write(MODULE_NAME, "[INFO] start -> findPreviousContent -> loopBody -> getCandles -> getting file.");
 
                             function onFileReceived(err, text) {
 
@@ -275,12 +294,14 @@
                                         getVolumes();
 
                                     } catch (err) {
-                                        logger.write(MODULE_NAME, "[ERROR] start -> findPreviousContent -> loopBody -> getCandles -> onFileReceived -> err = " + err.message);
+                                        logger.write(MODULE_NAME, "[ERROR] start -> findPreviousContent -> loopBody -> getCandles -> onFileReceived -> fileName = " + fileName);
+                                        logger.write(MODULE_NAME, "[ERROR] start -> findPreviousContent -> loopBody -> getCandles -> onFileReceived -> filePath = " + filePath);
+                                        logger.write(MODULE_NAME, "[ERROR] start -> findPreviousContent -> loopBody -> getCandles -> onFileReceived -> err = " + err.stack);
                                         logger.write(MODULE_NAME, "[ERROR] start -> findPreviousContent -> loopBody -> getCandles -> onFileReceived -> Asuming this is a temporary situation. Requesting a Retry.");
                                         callBackFunction(global.DEFAULT_RETRY_RESPONSE);
                                     }
                                 } else {
-                                    logger.write(MODULE_NAME, "[ERROR] start -> findPreviousContent -> loopBody -> getCandles -> onFileReceived -> err = " + err.message);
+                                    logger.write(MODULE_NAME, "[ERROR] start -> findPreviousContent -> loopBody -> getCandles -> onFileReceived -> err = " + err.stack);
                                     callBackFunction(err);
                                 }
                             }
@@ -290,13 +311,13 @@
 
                             if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> findPreviousContent -> loopBody -> getVolumes -> Entering function."); }
 
-                            let fileName = '' + market.assetA + '_' + market.assetB + '.json';
-                            let filePath = bot.filePathRoot + "/Output/" + VOLUMES_FOLDER_NAME + "/" + bot.process + "/" + timePeriod;
+                            let fileName = 'Data.json';
+                            let filePath = bot.filePathRoot + "/Output/" + VOLUMES_FOLDER_NAME + "/" + bot.process + "/" + timeFrame;
                             filePath += '/' + fileName
 
-                            fileStorage.getTextFile(bot.devTeam, filePath, onFileReceived);
+                            fileStorage.getTextFile(filePath, onFileReceived);
 
-                            console.log("[INFO] start -> findPreviousContent -> loopBody -> getVolumes -> getting file.");
+                            logger.write(MODULE_NAME, "[INFO] start -> findPreviousContent -> loopBody -> getVolumes -> getting file.");
 
                             function onFileReceived(err, text) {
 
@@ -317,12 +338,14 @@
                                         controlLoop();
 
                                     } catch (err) {
-                                        logger.write(MODULE_NAME, "[ERROR] start -> findPreviousContent -> loopBody -> getVolumes -> onFileReceived -> err = " + err.message);
+                                        logger.write(MODULE_NAME, "[ERROR] start -> findPreviousContent -> loopBody -> getVolumes -> onFileReceived -> fileName = " + fileName);
+                                        logger.write(MODULE_NAME, "[ERROR] start -> findPreviousContent -> loopBody -> getVolumes -> onFileReceived -> filePath = " + filePath);
+                                        logger.write(MODULE_NAME, "[ERROR] start -> findPreviousContent -> loopBody -> getVolumes -> onFileReceived -> err = " + err.stack);
                                         logger.write(MODULE_NAME, "[ERROR] start -> findPreviousContent -> loopBody -> getVolumes -> onFileReceived -> Asuming this is a temporary situation. Requesting a Retry.");
                                         callBackFunction(global.DEFAULT_RETRY_RESPONSE);
                                     }
                                 } else {
-                                    logger.write(MODULE_NAME, "[ERROR] start -> findPreviousContent -> loopBody -> getVolumes -> onFileReceived -> err = " + err.message);
+                                    logger.write(MODULE_NAME, "[ERROR] start -> findPreviousContent -> loopBody -> getVolumes -> onFileReceived -> err = " + err.stack);
                                     callBackFunction(err);
                                 }
                             }
@@ -348,7 +371,7 @@
                     }
                 }
                 catch (err) {
-                logger.write(MODULE_NAME, "[ERROR] start -> findPreviousContent -> err = " + err.message);
+                logger.write(MODULE_NAME, "[ERROR] start -> findPreviousContent -> err = " + err.stack);
                 callBackFunction(global.DEFAULT_FAIL_RESPONSE);
                 }
             }
@@ -358,6 +381,9 @@
                 try {
 
                     if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> Entering function."); }
+
+                    let fromDate = new Date(contextVariables.lastCandleFile.valueOf())
+                    let lastDate = new Date()
 
                     /*
                     Firstly we prepere the arrays that will accumulate all the information for each output file.
@@ -385,7 +411,7 @@
                         contextVariables.lastCandleFile = new Date(contextVariables.lastCandleFile.valueOf() + ONE_DAY_IN_MILISECONDS);
 
                         if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> advanceTime -> New processing time @ " + contextVariables.lastCandleFile.getUTCFullYear() + "/" + (contextVariables.lastCandleFile.getUTCMonth() + 1) + "/" + contextVariables.lastCandleFile.getUTCDate() + "."); }
-
+                                           
                         /* Validation that we are not going past the head of the market. */
 
                         if (contextVariables.lastCandleFile.valueOf() > contextVariables.maxCandleFile.valueOf()) {
@@ -394,6 +420,16 @@
 
                             callBackFunction(global.DEFAULT_OK_RESPONSE); // Here is where we finish processing and wait for the platform to run this module again.
                             return;
+                        }
+
+                        /*  Telling the world we are alive and doing well */
+                        let currentDateString = contextVariables.lastCandleFile.getUTCFullYear() + '-' + utilities.pad(contextVariables.lastCandleFile.getUTCMonth() + 1, 2) + '-' + utilities.pad(contextVariables.lastCandleFile.getUTCDate(), 2);
+                        let currentDate = new Date(contextVariables.lastCandleFile)
+                        let percentage = global.getPercentage(fromDate, currentDate, lastDate)
+                        bot.processHeartBeat(currentDateString, percentage) 
+
+                        if (global.areEqualDates(currentDate, new Date()) === false) {
+                            logger.newInternalLoop(bot.codeName, bot.process, currentDate, percentage);
                         }
 
                         periodsLoop();
@@ -429,15 +465,15 @@
                             }
 
                             const outputPeriod = global.marketFilesPeriods[n][0];
-                            const timePeriod = global.marketFilesPeriods[n][1];
+                            const timeFrame = global.marketFilesPeriods[n][1];
 
                             /*
-                            Here we are inside a Loop that is going to advance 1 day at the time, at each pass, will ready one of Bruce's daily files and
+                            Here we are inside a Loop that is going to advance 1 day at the time, at each pass, will ready one of Exchange Raw Data's daily files and
                             add all its candles to our in memory arrays. At the first iteration of this loop, we will add the candles that we are carrying
                             from our previous run, the ones we already have in-memory. You can see below how we discard from those candles the ones that
                             are belonging to the first day we are processing at this run, that it is exactly the same as the last day processed the privious
                             run. By discarding these candles, we are ready to run after that standard function that will just add ALL the candles found each
-                            day at Bruce.
+                            day at Exchange Raw Data.
                             */
 
                             if (previousCandles !== undefined) {
@@ -458,7 +494,7 @@
                                         outputCandles[n].push(candle);
 
                                     } else {
-                                        if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> periodsLoop -> loopBody -> Candle # " + i + " @ " + timePeriod + " discarded for closing past the current process time."); }
+                                        if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> periodsLoop -> loopBody -> Candle # " + i + " @ " + timeFrame + " discarded for closing past the current process time."); }
                                     }
                                 }
                                 allPreviousCandles[n] = []; // erasing these so as not to duplicate them.
@@ -480,14 +516,14 @@
                                         outputVolumes[n].push(volume);
 
                                     } else {
-                                        if (FULL_LOG === true) {logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> periodsLoop -> loopBody -> Volume # " + i + " @ " + timePeriod + " discarded for closing past the current process time."); }
+                                        if (FULL_LOG === true) {logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> periodsLoop -> loopBody -> Volume # " + i + " @ " + timeFrame + " discarded for closing past the current process time."); }
                                     }
                                 }
                                 allPreviousVolumes[n] = []; // erasing these so as not to duplicate them.
                             }
 
                             /*
-                            From here on is where every iteration of the loop fully runs. Here is where we read Bruce's files and add their content to whatever
+                            From here on is where every iteration of the loop fully runs. Here is where we read Exchange Raw Data's files and add their content to whatever
                             we already have in our arrays in-memory. In this way the process will run as many days needed and it should only stop when it reaches
                             the head of the market.
                             */
@@ -499,14 +535,14 @@
                                 if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> Entering function."); }
 
                                 let dateForPath = contextVariables.lastCandleFile.getUTCFullYear() + '/' + utilities.pad(contextVariables.lastCandleFile.getUTCMonth() + 1, 2) + '/' + utilities.pad(contextVariables.lastCandleFile.getUTCDate(), 2);
-                                let fileName = market.assetA + '_' + market.assetB + ".json"
-                                let filePathRoot = bot.devTeam + "/" + "AABruce" + "." + bot.version.major + "." + bot.version.minor + "/" + global.CLONE_EXECUTOR.codeName + "." + global.CLONE_EXECUTOR.version + "/" + global.EXCHANGE_NAME + "/" + bot.dataSetVersion;
+                                let fileName = "Data.json"
+                                let filePathRoot = bot.exchange + "/" + bot.market.baseAsset + "-" + bot.market.quotedAsset + "/" + bot.dataMine + "/" + "Exchange-Raw-Data";
                                 let filePath = filePathRoot + "/Output/" + CANDLES_FOLDER_NAME + '/' + CANDLES_ONE_MIN + '/' + dateForPath;
                                 filePath += '/' + fileName
 
-                                fileStorage.getTextFile(bot.devTeam, filePath, onFileReceived, true);
+                                fileStorage.getTextFile(filePath, onFileReceived);
 
-                                console.log("[INFO] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> getting file at dateForPath = " + dateForPath);
+                                logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> getting file at dateForPath = " + dateForPath);
 
                                 function onFileReceived(err, text) {
 
@@ -522,22 +558,22 @@
                                                 candlesFile = JSON.parse(text);
 
                                             } catch (err) {
-                                                logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Error Parsing JSON -> err = " + err.message);
+                                                logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Error Parsing JSON -> err = " + err.stack);
                                                 logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Asuming this is a temporary situation. Requesting a Retry.");
                                                 callBackFunction(global.DEFAULT_RETRY_RESPONSE);
                                                 return;
                                             }
                                         } else {
 
-                                            if (err.message === 'File does not exist.') {
+                                            if (err.message === 'File does not exist.' || err.code === 'The specified key does not exist.') {
 
-                                                logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Dependency Not Ready -> err = " + err.message);
-                                                logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Asuming this is a temporary situation. Requesting a Retry.");
+                                                logger.write(MODULE_NAME, "[WARN] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Dependency Not Ready -> err = " + JSON.stringify(err));
+                                                logger.write(MODULE_NAME, "[WARN] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Asuming this is a temporary situation. Requesting a Retry.");
                                                 callBackFunction(global.DEFAULT_RETRY_RESPONSE);
                                                 return;
 
                                             } else {
-                                                logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Error Received -> err = " + err.message);
+                                                logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Error Received -> err = " + err.stack);
                                                 callBackFunction(err);
                                                 return;
                                             }
@@ -550,8 +586,8 @@
                                         let beginingOutputTime = contextVariables.lastCandleFile.valueOf();
 
                                         /*
-                                        The algorithm that follows is going to agregate candles of 1 min timePeriod read from Bruce, into candles of each timePeriod
-                                        that Olivia generates. For market files those timePediods goes from 1h to 24hs.
+                                        The algorithm that follows is going to agregate candles of 1 min timeFrame read from Exchange Raw Data, into candles of each timeFrame
+                                        that Candles Volumes generates. For market files those timePediods goes from 1h to 24hs.
                                         */
 
                                         for (let i = 0; i < totalOutputCandles; i++) {
@@ -617,7 +653,7 @@
                                         nextVolumeFile();
 
                                     } catch (err) {
-                                        logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> err = " + err.message);
+                                        logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> err = " + err.stack);
                                         callBackFunction(global.DEFAULT_FAIL_RESPONSE);
                                     }
                                 }
@@ -630,14 +666,14 @@
                                     if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> Entering function."); }
 
                                     let dateForPath = contextVariables.lastCandleFile.getUTCFullYear() + '/' + utilities.pad(contextVariables.lastCandleFile.getUTCMonth() + 1, 2) + '/' + utilities.pad(contextVariables.lastCandleFile.getUTCDate(), 2);
-                                    let fileName = market.assetA + '_' + market.assetB + ".json"
-                                    let filePathRoot = bot.devTeam + "/" + "AABruce" + "." + bot.version.major + "." + bot.version.minor + "/" + global.CLONE_EXECUTOR.codeName + "." + global.CLONE_EXECUTOR.version + "/" + global.EXCHANGE_NAME + "/" + bot.dataSetVersion;
+                                    let fileName = "Data.json"
+                                    let filePathRoot = bot.exchange + "/" + bot.market.baseAsset + "-" + bot.market.quotedAsset + "/" + bot.dataMine + "/" + "Exchange-Raw-Data";
                                     let filePath = filePathRoot + "/Output/" + VOLUMES_FOLDER_NAME + '/' + VOLUMES_ONE_MIN + '/' + dateForPath;
                                     filePath += '/' + fileName
 
-                                    fileStorage.getTextFile(bot.devTeam, filePath, onFileReceived, true);
+                                    fileStorage.getTextFile(filePath, onFileReceived);
 
-                                    console.log("[INFO] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> getting file at dateForPath = " + dateForPath);
+                                    logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> getting file at dateForPath = " + dateForPath);
 
                                     function onFileReceived(err, text) {
 
@@ -651,13 +687,13 @@
                                                 volumesFile = JSON.parse(text);
 
                                             } catch (err) {
-                                                logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> onFileReceived -> Error Parsing JSON -> err = " + err.message);
+                                                logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> onFileReceived -> Error Parsing JSON -> err = " + err.stack);
                                                 logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> onFileReceived -> Asuming this is a temporary situation. Requesting a Retry.");
                                                 callBackFunction(global.DEFAULT_RETRY_RESPONSE);
                                                 return;
                                             }
                                         } else {
-                                            logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> onFileReceived -> Error Received -> err = " + err.message);
+                                            logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> onFileReceived -> Error Received -> err = " + err.stack);
                                             callBackFunction(err);
                                             return;
                                         }
@@ -709,10 +745,10 @@
                                             }
                                         }
 
-                                        writeFiles(outputCandles[n], outputVolumes[n], timePeriod, controlLoop);
+                                        writeFiles(outputCandles[n], outputVolumes[n], timeFrame, controlLoop);
                                     }
                                 } catch (err) {
-                                    logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> onFileReceived -> err = " + err.message);
+                                    logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> onFileReceived -> err = " + err.stack);
                                     callBackFunction(global.DEFAULT_FAIL_RESPONSE);
                                 }
                             }
@@ -736,12 +772,12 @@
                     }
                 }
                 catch (err) {
-                    logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> err = " + err.message);
+                    logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> err = " + err.stack);
                     callBackFunction(global.DEFAULT_FAIL_RESPONSE);
                 }
             }
 
-            function writeFiles(candles, volumes, timePeriod, callBack) {
+            function writeFiles(candles, volumes, timeFrame, callBack) {
 
                 if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> writeFiles -> Entering function."); }
 
@@ -777,20 +813,20 @@
 
                         fileContent = "[" + fileContent + "]";
 
-                        let fileName = '' + market.assetA + '_' + market.assetB + '.json';
-                        let filePath = bot.filePathRoot + "/Output/" + CANDLES_FOLDER_NAME + "/" + bot.process + "/" + timePeriod;
+                        let fileName = 'Data.json';
+                        let filePath = bot.filePathRoot + "/Output/" + CANDLES_FOLDER_NAME + "/" + bot.process + "/" + timeFrame;
                         filePath += '/' + fileName
 
-                        fileStorage.createTextFile(bot.devTeam, filePath, fileContent + '\n', onFileCreated);
+                        fileStorage.createTextFile(filePath, fileContent + '\n', onFileCreated);
 
-                        console.log("[INFO] start -> writeFiles -> writeCandles -> creating file at filePath = " + filePath);
+                        logger.write(MODULE_NAME, "[INFO] start -> writeFiles -> writeCandles -> creating file at filePath = " + filePath);
 
                         function onFileCreated(err) {
 
                             if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> writeFiles -> writeCandles -> onFileCreated -> Entering function."); }
 
                             if (err.result !== global.DEFAULT_OK_RESPONSE.result) {
-                                logger.write(MODULE_NAME, "[ERROR] start -> writeFiles -> writeCandles -> onFileCreated -> err = " + err.message);
+                                logger.write(MODULE_NAME, "[ERROR] start -> writeFiles -> writeCandles -> onFileCreated -> err = " + err.stack);
                                 callBackFunction(err);
                                 return;
                             }
@@ -799,7 +835,7 @@
                                 logger.write(MODULE_NAME, "[INFO] start -> writeFiles -> writeCandles -> onFileCreated ->  Content written = " + fileContent);
                             }
 
-                            logger.write(MODULE_NAME, "[WARN] start -> writeFiles -> writeCandles -> onFileCreated ->  Finished with File @ " + market.assetA + "_" + market.assetB + ", " + fileRecordCounter + " records inserted into " + filePath + "/" + fileName );
+                            logger.write(MODULE_NAME, "[WARN] start -> writeFiles -> writeCandles -> onFileCreated ->  Finished with File @ " + market.baseAsset + "_" + market.quotedAsset + ", " + fileRecordCounter + " records inserted into " + filePath + "/" + fileName );
 
                             writeVolumes();
                         }
@@ -827,20 +863,20 @@
 
                         fileContent = "[" + fileContent + "]";
 
-                        let fileName = '' + market.assetA + '_' + market.assetB + '.json';
-                        let filePath = bot.filePathRoot + "/Output/" + VOLUMES_FOLDER_NAME + "/" + bot.process + "/" + timePeriod;
+                        let fileName = 'Data.json';
+                        let filePath = bot.filePathRoot + "/Output/" + VOLUMES_FOLDER_NAME + "/" + bot.process + "/" + timeFrame;
                         filePath += '/' + fileName
 
-                        fileStorage.createTextFile(bot.devTeam, filePath, fileContent + '\n', onFileCreated);
+                        fileStorage.createTextFile(filePath, fileContent + '\n', onFileCreated);
 
-                        console.log("[INFO] start -> writeFiles -> writeVolumes -> creating file at filePath = " + filePath);
+                        logger.write(MODULE_NAME, "[INFO] start -> writeFiles -> writeVolumes -> creating file at filePath = " + filePath);
 
                         function onFileCreated(err) {
 
                             if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> writeFiles -> writeVolumes -> onFileCreated -> Entering function."); }
 
                             if (err.result !== global.DEFAULT_OK_RESPONSE.result) {
-                                logger.write(MODULE_NAME, "[ERROR] start -> writeFiles -> writeVolumes -> onFileCreated -> err = " + err.message);
+                                logger.write(MODULE_NAME, "[ERROR] start -> writeFiles -> writeVolumes -> onFileCreated -> err = " + err.stack);
                                 callBackFunction(err);
                                 return;
                             }
@@ -849,14 +885,14 @@
                                 logger.write(MODULE_NAME, "[INFO] start -> writeFiles -> writeVolumes -> onFileCreated ->  Content written = " + fileContent);
                             }
 
-                            logger.write(MODULE_NAME, "[WARN] start -> writeFiles -> writeVolumes -> onFileCreated ->  Finished with File @ " + market.assetA + "_" + market.assetB + ", " + fileRecordCounter + " records inserted into " + filePath + "/" + fileName);
+                            logger.write(MODULE_NAME, "[WARN] start -> writeFiles -> writeVolumes -> onFileCreated ->  Finished with File @ " + market.baseAsset + "_" + market.quotedAsset + ", " + fileRecordCounter + " records inserted into " + filePath + "/" + fileName);
 
                             callBack();
                         }
                     }
                 }
                 catch (err) {
-                logger.write(MODULE_NAME, "[ERROR] start -> writeFiles -> err = " + err.message);
+                logger.write(MODULE_NAME, "[ERROR] start -> writeFiles -> err = " + err.stack);
                 callBackFunction(global.DEFAULT_FAIL_RESPONSE);
                 }
             }
@@ -868,22 +904,23 @@
 
                 try {
 
-                    let reportKey = "AAMasters" + "-" + "AAOlivia" + "-" + "Multi-Period-Market" + "-" + "dataSet.V1";
+                    let reportKey = "Masters" + "-" + "Candles-Volumes" + "-" + "Multi-Period-Market" 
                     let thisReport = statusDependencies.statusReports.get(reportKey);
 
                     thisReport.file.lastExecution = bot.processDatetime;
                     thisReport.file.lastFile = lastFileDate;
+                    thisReport.file.beginingOfMarket = beginingOfMarket.toUTCString()
                     thisReport.save(callBack);
 
                 }
                 catch (err) {
-                    logger.write(MODULE_NAME, "[ERROR] start -> writeStatusReport -> err = " + err.message);
+                    logger.write(MODULE_NAME, "[ERROR] start -> writeStatusReport -> err = " + err.stack);
                     callBackFunction(global.DEFAULT_FAIL_RESPONSE);
                 }
             }
         }
         catch (err) {
-            logger.write(MODULE_NAME, "[ERROR] start -> err = " + err.message);
+            logger.write(MODULE_NAME, "[ERROR] start -> err = " + err.stack);
             callBackFunction(global.DEFAULT_FAIL_RESPONSE);
         }
     }

@@ -1,4 +1,4 @@
-﻿exports.newUserBot = function newUserBot(bot, logger, COMMONS, UTILITIES, fileStorage) {
+﻿exports.newUserBot = function newUserBot(bot, logger, COMMONS, UTILITIES, FILE_STORAGE) {
 
     const FULL_LOG = true;
     const LOG_FILE_CONTENT = false;
@@ -23,12 +23,14 @@
     };
 
     let utilities = UTILITIES.newCloudUtilities(bot, logger);
+    let fileStorage = FILE_STORAGE.newFileStorage(logger);
 
     let statusDependencies;
+    let beginingOfMarket
 
     return thisObject;
 
-    function initialize(pStatusDependencies, pMonth, pYear, callBackFunction) {
+    function initialize(pStatusDependencies, callBackFunction) {
 
         try {
 
@@ -42,7 +44,7 @@
             callBackFunction(global.DEFAULT_OK_RESPONSE);
 
         } catch (err) {
-            logger.write(MODULE_NAME, "[ERROR] initialize -> err = " + err.message);
+            logger.write(MODULE_NAME, "[ERROR] initialize -> err = " + err.stack);
             callBackFunction(global.DEFAULT_FAIL_RESPONSE);
         }
     }
@@ -51,7 +53,7 @@
 
 This process is going to do the following:
 
-Read the candles and volumes from Bruce and produce a file for each day and for each period with candles and volumes.
+Read the candles and volumes from Exchange Raw Data and produce a file for each day and for each period with candles and volumes.
 
 */
 
@@ -61,7 +63,7 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
 
             if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> Entering function."); }
 
-            let market = global.MARKET;
+            let market = bot.market;
 
             /* Context Variables */
 
@@ -83,9 +85,9 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                     let reportKey;
                     let statusReport;
 
-                    /* We look first for Charly in order to get when the market starts. */
+                    /* We look first for Exchange Raw Data in order to get when the market starts. */
 
-                    reportKey = "AAMasters" + "-" + "AACharly" + "-" + "Historic-Trades" + "-" + "dataSet.V1";
+                    reportKey = "Masters" + "-" + "Exchange-Raw-Data" + "-" + "Historic-OHLCVs" 
                     if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> getContextVariables -> reportKey = " + reportKey); }
 
                     statusReport = statusDependencies.statusReports.get(reportKey);
@@ -104,7 +106,7 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
 
                     thisReport = statusDependencies.statusReports.get(reportKey).file;
 
-                    if (thisReport.lastFile === undefined) {
+                    if (thisReport.beginingOfMarket === undefined) {
                         logger.write(MODULE_NAME, "[WARN] start -> getContextVariables -> Undefined Last File. -> reportKey = " + reportKey);
                         logger.write(MODULE_NAME, "[HINT] start -> getContextVariables -> It is too early too run this process since the trade history of the market is not there yet.");
 
@@ -117,11 +119,11 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                         return;
                     }
 
-                    contextVariables.firstTradeFile = new Date(thisReport.lastFile.year + "-" + thisReport.lastFile.month + "-" + thisReport.lastFile.days + " " + thisReport.lastFile.hours + ":" + thisReport.lastFile.minutes + GMT_SECONDS);
+                    contextVariables.firstTradeFile = new Date(thisReport.beginingOfMarket.year + "-" + thisReport.beginingOfMarket.month + "-" + thisReport.beginingOfMarket.days + " " + thisReport.beginingOfMarket.hours + ":" + thisReport.beginingOfMarket.minutes + GMT_SECONDS);
 
-                    /* Second, we get the report from Bruce, to know when the marted ends. */
+                    /* Second, we get the report from Exchange Raw Data, to know when the marted ends. */
 
-                    reportKey = "AAMasters" + "-" + "AABruce" + "-" + "Single-Period-Daily" + "-" + "dataSet.V1" + "-" +  bot.processDatetime.getUTCFullYear() + "-" + utilities.pad(bot.processDatetime.getUTCMonth() + 1,2);
+                    reportKey = "Masters" + "-" + "Exchange-Raw-Data" + "-" + "Historic-OHLCVs" 
                     if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> getContextVariables -> reportKey = " + reportKey); }
 
                     statusReport = statusDependencies.statusReports.get(reportKey);
@@ -156,7 +158,7 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
 
                     /* Finally we get our own Status Report. */
 
-                    reportKey = "AAMasters" + "-" + "AAOlivia" + "-" + "Multi-Period-Daily" + "-" + "dataSet.V1";
+                    reportKey = "Masters" + "-" + "Candles-Volumes" + "-" + "Multi-Period-Daily"
                     if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> getContextVariables -> reportKey = " + reportKey); }
 
                     statusReport = statusDependencies.statusReports.get(reportKey);
@@ -176,6 +178,20 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                     thisReport = statusDependencies.statusReports.get(reportKey).file;
 
                     if (thisReport.lastFile !== undefined) {
+                        logger.write(MODULE_NAME, "[INFO] start -> getContextVariables -> Process Running not for the very first time. -> reportKey = " + reportKey);
+
+                        beginingOfMarket = new Date(thisReport.beginingOfMarket);
+
+                        if (beginingOfMarket.valueOf() !== contextVariables.firstTradeFile.valueOf()) { // Reset Mechanism for Begining of the Market
+                            logger.write(MODULE_NAME, "[INFO] start -> getContextVariables -> Reset Mechanism for Begining of the Market Activated. -> reportKey = " + reportKey);
+
+                            beginingOfMarket = new Date(contextVariables.firstTradeFile.getUTCFullYear() + "-" + (contextVariables.firstTradeFile.getUTCMonth() + 1) + "-" + contextVariables.firstTradeFile.getUTCDate() + " " + "00:00" + GMT_SECONDS);
+                            contextVariables.lastCandleFile = new Date(contextVariables.firstTradeFile.getUTCFullYear() + "-" + (contextVariables.firstTradeFile.getUTCMonth() + 1) + "-" + contextVariables.firstTradeFile.getUTCDate() + " " + "00:00" + GMT_SECONDS);
+                            contextVariables.lastCandleFile = new Date(contextVariables.lastCandleFile.valueOf() - ONE_DAY_IN_MILISECONDS); // Go back one day to start well.
+
+                            buildCandles();
+                            return;
+                        }
 
                         contextVariables.lastCandleFile = new Date(thisReport.lastFile);
 
@@ -190,7 +206,9 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                         return;
 
                     } else {
+                        logger.write(MODULE_NAME, "[INFO] start -> getContextVariables -> Process Running for the very first time. -> reportKey = " + reportKey);
 
+                        beginingOfMarket = new Date(contextVariables.firstTradeFile.getUTCFullYear() + "-" + (contextVariables.firstTradeFile.getUTCMonth() + 1) + "-" + contextVariables.firstTradeFile.getUTCDate() + " " + "00:00" + GMT_SECONDS);
                         contextVariables.lastCandleFile = new Date(contextVariables.firstTradeFile.getUTCFullYear() + "-" + (contextVariables.firstTradeFile.getUTCMonth() + 1) + "-" + contextVariables.firstTradeFile.getUTCDate() + " " + "00:00" + GMT_SECONDS);
                         contextVariables.lastCandleFile = new Date(contextVariables.lastCandleFile.valueOf() - ONE_DAY_IN_MILISECONDS); // Go back one day to start well.
 
@@ -199,7 +217,7 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                     }
 
                 } catch (err) {
-                    logger.write(MODULE_NAME, "[ERROR] start -> getContextVariables -> err = " + err.message);
+                    logger.write(MODULE_NAME, "[ERROR] start -> getContextVariables -> err = " + err.stack);
                     if (err.message === "Cannot read property 'file' of undefined") {
                         logger.write(MODULE_NAME, "[HINT] start -> getContextVariables -> Check the bot configuration to see if all of its statusDependencies declarations are correct. ");
                         logger.write(MODULE_NAME, "[HINT] start -> getContextVariables -> Dependencies loaded -> keys = " + JSON.stringify(statusDependencies.keys));
@@ -211,7 +229,8 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
             function buildCandles() {
 
                 try {
-
+                    let fromDate = new Date(contextVariables.lastCandleFile.valueOf())
+                    let lastDate = new Date()
                     if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> Entering function."); }
 
                     let outputCandles;
@@ -237,6 +256,15 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                             return;
                         }
 
+                        /*  Telling the world we are alive and doing well */
+                        let currentDateString = contextVariables.lastCandleFile.getUTCFullYear() + '-' + utilities.pad(contextVariables.lastCandleFile.getUTCMonth() + 1, 2) + '-' + utilities.pad(contextVariables.lastCandleFile.getUTCDate(), 2);
+                        let currentDate = new Date(contextVariables.lastCandleFile)
+                        let percentage = global.getPercentage(fromDate, currentDate, lastDate)
+                        bot.processHeartBeat(currentDateString, percentage) 
+
+                        if (global.areEqualDates(currentDate, new Date()) === false) {
+                            logger.newInternalLoop(bot.codeName, bot.process, currentDate, percentage);
+                        }
                         /*
 
                         We prepere the arrays that will accumulate all the information for each output file.
@@ -277,7 +305,7 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                             if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> periodsLoop -> loopBody -> Entering function."); }
 
                             const outputPeriod = global.dailyFilePeriods[n][0];
-                            const timePeriod = global.dailyFilePeriods[n][1];
+                            const timeFrame = global.dailyFilePeriods[n][1];
 
                             nextCandleFile();
 
@@ -286,14 +314,14 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                                 if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> Entering function."); }
 
                                 let dateForPath = contextVariables.lastCandleFile.getUTCFullYear() + '/' + utilities.pad(contextVariables.lastCandleFile.getUTCMonth() + 1, 2) + '/' + utilities.pad(contextVariables.lastCandleFile.getUTCDate(), 2);
-                                let fileName = market.assetA + '_' + market.assetB + ".json"
-                                let filePathRoot = bot.devTeam + "/" + "AABruce" + "." + bot.version.major + "." + bot.version.minor + "/" + global.CLONE_EXECUTOR.codeName + "." +  global.CLONE_EXECUTOR.version + "/" + global.EXCHANGE_NAME + "/" + bot.dataSetVersion;
+                                let fileName = "Data.json"
+                                let filePathRoot = bot.exchange + "/" + bot.market.baseAsset + "-" + bot.market.quotedAsset + "/" + bot.dataMine + "/" + "Exchange-Raw-Data";
                                 let filePath = filePathRoot + "/Output/" + CANDLES_FOLDER_NAME + '/' + CANDLES_ONE_MIN + '/' + dateForPath;
                                 filePath += '/' + fileName
 
-                                fileStorage.getTextFile(bot.devTeam, filePath, onFileReceived, true);
+                                fileStorage.getTextFile(filePath, onFileReceived);
 
-                                console.log("[INFO] start -> buildCandles -> periodsLoop -> loopBody -> getting file at dateForPath = " + dateForPath);
+                                logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> periodsLoop -> loopBody -> getting file at dateForPath = " + dateForPath);
 
                                 function onFileReceived(err, text) {
 
@@ -309,22 +337,22 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                                                 candlesFile = JSON.parse(text);
 
                                             } catch (err) {
-                                                logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Error Parsing JSON -> err = " + err.message);
+                                                logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Error Parsing JSON -> err = " + err.stack);
                                                 logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Asuming this is a temporary situation. Requesting a Retry.");
                                                 callBackFunction(global.DEFAULT_RETRY_RESPONSE);
                                                 return;
                                             }
                                         } else {
 
-                                            if (err.message === 'File does not exist.') {
+                                            if (err.message === 'File does not exist.' || err.code === 'The specified key does not exist.') {
 
-                                                logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Dependency Not Ready -> err = " + err.message);
-                                                logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Asuming this is a temporary situation. Requesting a Retry.");
+                                                logger.write(MODULE_NAME, "[WARN] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Dependency Not Ready -> err = " + err.stack);
+                                                logger.write(MODULE_NAME, "[WARN] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Asuming this is a temporary situation. Requesting a Retry.");
                                                 callBackFunction(global.DEFAULT_RETRY_RESPONSE);
                                                 return;
 
                                             } else {
-                                                logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Error Received -> err = " + err.message);
+                                                logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> Error Received -> err = " + err.stack);
                                                 callBackFunction(err);
                                                 return;
                                             }
@@ -399,7 +427,7 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                                         nextVolumeFile();
 
                                     } catch (err) {
-                                        logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> err = " + err.message);
+                                        logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextCandleFile -> onFileReceived -> err = " + err.stack);
                                         callBackFunction(global.DEFAULT_FAIL_RESPONSE);
                                     }
                                 }
@@ -412,14 +440,14 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                                     if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> Entering function."); }
 
                                     let dateForPath = contextVariables.lastCandleFile.getUTCFullYear() + '/' + utilities.pad(contextVariables.lastCandleFile.getUTCMonth() + 1, 2) + '/' + utilities.pad(contextVariables.lastCandleFile.getUTCDate(), 2);
-                                    let fileName = market.assetA + '_' + market.assetB + ".json"
-                                    let filePathRoot = bot.devTeam + "/" + "AABruce" + "." + bot.version.major + "." + bot.version.minor + "/" + global.CLONE_EXECUTOR.codeName + "." +  global.CLONE_EXECUTOR.version + "/" + global.EXCHANGE_NAME + "/" + bot.dataSetVersion;
+                                    let fileName = "Data.json"
+                                    let filePathRoot = bot.exchange + "/" + bot.market.baseAsset + "-" + bot.market.quotedAsset + "/" + bot.dataMine + "/" + "Exchange-Raw-Data";
                                     let filePath = filePathRoot + "/Output/" + VOLUMES_FOLDER_NAME + '/' + VOLUMES_ONE_MIN + '/' + dateForPath;
                                     filePath += '/' + fileName
 
-                                    fileStorage.getTextFile(bot.devTeam, filePath, onFileReceived, true);
+                                    fileStorage.getTextFile(filePath, onFileReceived);
 
-                                    console.log("[INFO] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> getting file at dateForPath = " + dateForPath);
+                                    logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> getting file at dateForPath = " + dateForPath);
 
                                     function onFileReceived(err, text) {
 
@@ -433,13 +461,13 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                                                 volumesFile = JSON.parse(text);
 
                                             } catch (err) {
-                                                logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> onFileReceived -> Error Parsing JSON -> err = " + err.message);
+                                                logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> onFileReceived -> Error Parsing JSON -> err = " + err.stack);
                                                 logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> onFileReceived -> Asuming this is a temporary situation. Requesting a Retry.");
                                                 callBackFunction(global.DEFAULT_RETRY_RESPONSE);
                                                 return;
                                             }
                                         } else {
-                                            logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> onFileReceived -> Error Received -> err = " + err.message);
+                                            logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> onFileReceived -> Error Received -> err = " + err.stack);
                                             callBackFunction(err);
                                             return;
                                         }
@@ -492,11 +520,11 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                                             }
                                         }
 
-                                        writeFiles(outputCandles[n], outputVolumes[n], timePeriod, controlLoop);
+                                        writeFiles(outputCandles[n], outputVolumes[n], timeFrame, controlLoop);
 
                                     }
                                 } catch (err) {
-                                    logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> onFileReceived -> err = " + err.message);
+                                    logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> periodsLoop -> loopBody -> nextVolumeFile -> onFileReceived -> err = " + err.stack);
                                     callBackFunction(global.DEFAULT_FAIL_RESPONSE);
                                 }
                             }
@@ -521,7 +549,7 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                                     if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> buildCandles -> periodsLoop -> controlLoop -> onWritten -> Entering function."); }
 
                                     if (err.result !== global.DEFAULT_OK_RESPONSE.result) {
-                                        logger.write(MODULE_NAME, "[ERROR] writeDataRanges -> writeDataRanges -> onCandlesDataRangeWritten -> err = " + err.message);
+                                        logger.write(MODULE_NAME, "[ERROR] writeDataRanges -> writeDataRanges -> onCandlesDataRangeWritten -> err = " + err.stack);
                                         callBack(err);
                                         return;
                                     }
@@ -534,12 +562,12 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                     }
                 }
                 catch (err) {
-                    logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> err = " + err.message);
+                    logger.write(MODULE_NAME, "[ERROR] start -> buildCandles -> err = " + err.stack);
                     callBackFunction(global.DEFAULT_FAIL_RESPONSE);
                 }
             }
 
-            function writeFiles(candles, volumes, timePeriod, callBack) {
+            function writeFiles(candles, volumes, timeFrame, callBack) {
 
                 if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> writeFiles -> Entering function."); }
 
@@ -575,21 +603,21 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
 
                         fileContent = "[" + fileContent + "]";
 
-                        let fileName = '' + market.assetA + '_' + market.assetB + '.json';
+                        let fileName = 'Data.json';
                         let dateForPath = contextVariables.lastCandleFile.getUTCFullYear() + '/' + utilities.pad(contextVariables.lastCandleFile.getUTCMonth() + 1, 2) + '/' + utilities.pad(contextVariables.lastCandleFile.getUTCDate(), 2);
-                        let filePath = bot.filePathRoot + "/Output/" + CANDLES_FOLDER_NAME + "/" + bot.process + "/" + timePeriod + "/" + dateForPath;
+                        let filePath = bot.filePathRoot + "/Output/" + CANDLES_FOLDER_NAME + "/" + bot.process + "/" + timeFrame + "/" + dateForPath;
                         filePath += '/' + fileName
 
-                        fileStorage.createTextFile(bot.devTeam, filePath, fileContent + '\n', onFileCreated);
+                        fileStorage.createTextFile(filePath, fileContent + '\n', onFileCreated);
 
-                        console.log("[INFO] start -> writeFiles -> writeCandles -> creating file at filePath = " + filePath);
+                        logger.write(MODULE_NAME, "[INFO] start -> writeFiles -> writeCandles -> creating file at filePath = " + filePath);
 
                         function onFileCreated(err) {
 
                             if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> writeFiles -> writeCandles -> onFileCreated -> Entering function."); }
 
                             if (err.result !== global.DEFAULT_OK_RESPONSE.result) {
-                                logger.write(MODULE_NAME, "[ERROR] start -> writeFiles -> writeCandles -> onFileCreated -> err = " + err.message);
+                                logger.write(MODULE_NAME, "[ERROR] start -> writeFiles -> writeCandles -> onFileCreated -> err = " + err.stack);
                                 callBackFunction(err);
                                 return;
                             }
@@ -598,7 +626,7 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                                 logger.write(MODULE_NAME, "[INFO] start -> writeFiles -> writeCandles -> onFileCreated ->  Content written = " + fileContent);
                             }
 
-                            logger.write(MODULE_NAME, "[WARN] start -> writeFiles -> writeCandles -> onFileCreated ->  Finished with File @ " + market.assetA + "_" + market.assetB + ", " + fileRecordCounter + " records inserted into " + filePath + "/" + fileName);
+                            logger.write(MODULE_NAME, "[WARN] start -> writeFiles -> writeCandles -> onFileCreated ->  Finished with File @ " + market.baseAsset + "_" + market.quotedAsset + ", " + fileRecordCounter + " records inserted into " + filePath + "/" + fileName);
 
                             writeVolumes();
                         }
@@ -626,21 +654,21 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
 
                         fileContent = "[" + fileContent + "]";
 
-                        let fileName = '' + market.assetA + '_' + market.assetB + '.json';
+                        let fileName = 'Data.json';
                         let dateForPath = contextVariables.lastCandleFile.getUTCFullYear() + '/' + utilities.pad(contextVariables.lastCandleFile.getUTCMonth() + 1, 2) + '/' + utilities.pad(contextVariables.lastCandleFile.getUTCDate(), 2);
-                        let filePath = bot.filePathRoot  + "/Output/" + VOLUMES_FOLDER_NAME + "/" + bot.process + "/" + timePeriod + "/" + dateForPath;
+                        let filePath = bot.filePathRoot  + "/Output/" + VOLUMES_FOLDER_NAME + "/" + bot.process + "/" + timeFrame + "/" + dateForPath;
                         filePath += '/' + fileName
 
-                        fileStorage.createTextFile(bot.devTeam, filePath, fileContent + '\n', onFileCreated);
+                        fileStorage.createTextFile(filePath, fileContent + '\n', onFileCreated);
 
-                        console.log("[INFO] start -> writeFiles -> writeVolumes -> creating file at filePath = " + filePath);
+                        logger.write(MODULE_NAME, "[INFO] start -> writeFiles -> writeVolumes -> creating file at filePath = " + filePath);
 
                         function onFileCreated(err) {
 
                             if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> writeFiles -> writeVolumes -> onFileCreated -> Entering function."); }
 
                             if (err.result !== global.DEFAULT_OK_RESPONSE.result) {
-                                logger.write(MODULE_NAME, "[ERROR] start -> writeFiles -> writeVolumes -> onFileCreated -> err = " + err.message);
+                                logger.write(MODULE_NAME, "[ERROR] start -> writeFiles -> writeVolumes -> onFileCreated -> err = " + err.stack);
                                 callBackFunction(err);
                                 return;
                             }
@@ -649,14 +677,14 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                                 logger.write(MODULE_NAME, "[INFO] start -> writeFiles -> writeVolumes -> onFileCreated ->  Content written = " + fileContent);
                             }
 
-                            logger.write(MODULE_NAME, "[WARN] start -> writeFiles -> writeVolumes -> onFileCreated ->  Finished with File @ " + market.assetA + "_" + market.assetB + ", " + fileRecordCounter + " records inserted into " + filePath + "/" + fileName);
+                            logger.write(MODULE_NAME, "[WARN] start -> writeFiles -> writeVolumes -> onFileCreated ->  Finished with File @ " + market.baseAsset + "_" + market.quotedAsset + ", " + fileRecordCounter + " records inserted into " + filePath + "/" + fileName);
 
                             callBack();
                         }
                     }
                 }
                 catch (err) {
-                    logger.write(MODULE_NAME, "[ERROR] start -> writeFiles -> err = " + err.message);
+                    logger.write(MODULE_NAME, "[ERROR] start -> writeFiles -> err = " + err.stack);
                     callBackFunction(global.DEFAULT_FAIL_RESPONSE);
                 }
             }
@@ -674,7 +702,7 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                         if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> writeDataRanges -> Entering function."); }
 
                         if (err.result !== global.DEFAULT_OK_RESPONSE.result) {
-                            logger.write(MODULE_NAME, "[ERROR] writeDataRanges -> writeDataRanges -> onCandlesDataRangeWritten -> err = " + err.message);
+                            logger.write(MODULE_NAME, "[ERROR] writeDataRanges -> writeDataRanges -> onCandlesDataRangeWritten -> err = " + err.stack);
                             callBack(err);
                             return;
                         }
@@ -686,7 +714,7 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                             if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] writeDataRanges -> writeDataRanges -> onVolumeDataRangeWritten -> Entering function."); }
 
                             if (err.result !== global.DEFAULT_OK_RESPONSE.result) {
-                                logger.write(MODULE_NAME, "[ERROR] writeDataRanges -> writeDataRanges -> onVolumeDataRangeWritten -> err = " + err.message);
+                                logger.write(MODULE_NAME, "[ERROR] writeDataRanges -> writeDataRanges -> onVolumeDataRangeWritten -> err = " + err.stack);
                                 callBack(err);
                                 return;
                             }
@@ -696,7 +724,7 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                     }
                 }
                 catch (err) {
-                    logger.write(MODULE_NAME, "[ERROR] start -> writeDataRanges -> err = " + err.message);
+                    logger.write(MODULE_NAME, "[ERROR] start -> writeDataRanges -> err = " + err.stack);
                     callBack(global.DEFAULT_FAIL_RESPONSE);
                 }
 
@@ -710,23 +738,23 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
 
                     let dataRange = {
                         begin: pBegin.valueOf(),
-                        end:pEnd.valueOf()
+                        end:pEnd.valueOf() + ONE_DAY_IN_MILISECONDS
                     };
 
                     let fileContent = JSON.stringify(dataRange);
 
-                    let fileName = 'Data.Range.' + market.assetA + '_' + market.assetB + '.json';
+                    let fileName = 'Data.Range.json';
                     let filePath = bot.filePathRoot + "/Output/" + pProductFolder + "/" + bot.process;
                     filePath += '/' + fileName
 
-                    fileStorage.createTextFile(bot.devTeam, filePath, fileContent + '\n', onFileCreated);
+                    fileStorage.createTextFile(filePath, fileContent + '\n', onFileCreated);
 
                     function onFileCreated(err) {
 
                         if (FULL_LOG === true) { logger.write(MODULE_NAME, "[INFO] start -> writeDataRange -> onFileCreated -> Entering function."); }
 
                         if (err.result !== global.DEFAULT_OK_RESPONSE.result) {
-                            logger.write(MODULE_NAME, "[ERROR] start -> writeDataRange -> onFileCreated -> err = " + err.message);
+                            logger.write(MODULE_NAME, "[ERROR] start -> writeDataRange -> onFileCreated -> err = " + err.stack);
                             callBack(err);
                             return;
                         }
@@ -735,11 +763,18 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
                             logger.write(MODULE_NAME, "[INFO] start -> writeDataRange -> onFileCreated ->  Content written = " + fileContent);
                         }
 
+                        let key = bot.dataMine + "-" + bot.codeName + "-" + pProductFolder + "-" + bot.exchange + "-" + bot.market.baseAsset + '/' + bot.market.quotedAsset
+                        let event = {
+                            dateRange: dataRange
+                        }
+
+                        global.EVENT_SERVER_CLIENT.raiseEvent(key, 'Data Range Updated', event)
+
                         callBack(global.DEFAULT_OK_RESPONSE);
                     }
                 }
                 catch (err) {
-                    logger.write(MODULE_NAME, "[ERROR] start -> writeDataRange -> err = " + err.message);
+                    logger.write(MODULE_NAME, "[ERROR] start -> writeDataRange -> err = " + err.stack);
                     callBack(global.DEFAULT_FAIL_RESPONSE);
                 }
             }
@@ -751,23 +786,24 @@ Read the candles and volumes from Bruce and produce a file for each day and for 
 
                 try {
 
-                    let reportKey = "AAMasters" + "-" + "AAOlivia" + "-" + "Multi-Period-Daily" + "-" + "dataSet.V1";
+                    let reportKey = "Masters" + "-" + "Candles-Volumes" + "-" + "Multi-Period-Daily" 
                     let thisReport = statusDependencies.statusReports.get(reportKey);
 
                     thisReport.file.lastExecution = bot.processDatetime;
                     thisReport.file.lastFile = lastFileDate;
+                    thisReport.file.beginingOfMarket = beginingOfMarket.toUTCString()
                     thisReport.save(callBack);
 
                 }
                 catch (err) {
-                    logger.write(MODULE_NAME, "[ERROR] start -> writeStatusReport -> err = " + err.message);
+                    logger.write(MODULE_NAME, "[ERROR] start -> writeStatusReport -> err = " + err.stack);
                     callBackFunction(global.DEFAULT_FAIL_RESPONSE);
                 }
             }
 
         }
         catch (err) {
-            logger.write(MODULE_NAME, "[ERROR] 'Start' - ERROR : " + err.message);
+            logger.write(MODULE_NAME, "[ERROR] 'Start' - ERROR : " + err.stack);
             callBackFunction(global.DEFAULT_FAIL_RESPONSE);
         }
     }
